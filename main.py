@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # --- CONFIGURATION ---
 ACCOUNT_NAME = "bemol"
-VTEX_COOKIE = os.getenv("VTEX_COOKIE", "Paste your VTEX cookie here")  #Paste your VTEX cookie here
+VTEX_COOKIE = os.getenv("VTEX_COOKIE", "eyJhbGciOiJFUzI1NiIsImtpZCI6IkI0M0JBRjkyOEUxQ0RCQjgwRjY2NUNDMTUzM0UyNUI2MTVBQUE1QjkiLCJ0eXAiOiJqd3QifQ.eyJzdWIiOiJmYWJyaWNpb21hY2Vkb0BiZW1vbC5jb20uYnIiLCJhY2NvdW50IjoiYmVtb2wiLCJhdWRpZW5jZSI6ImFkbWluIiwic2VzcyI6IjYyNDlkODkzLTY5YTEtNDJjMy04MzFlLWRhN2FjZDU4NGU3YiIsImV4cCI6MTc2ODMyNTAyOSwidHlwZSI6InVzZXIiLCJ1c2VySWQiOiI3ZjhjMjljZi1kNTc2LTRkOWEtYTI5Ni00ZjE1YWYzYmI2NTQiLCJpYXQiOjE3NjgyMzg2MjksImlzUmVwcmVzZW50YXRpdmUiOmZhbHNlLCJpc3MiOiJ0b2tlbi1lbWl0dGVyIiwianRpIjoiZTBmOTFlNDQtMjZiYy00ZTNmLTljNmMtYTRlZmQ3N2EyYTVmIn0.XJjshOHc9hNBEbHcatsOfAY3v9Oa3WjfVqJHh0uW2qhZ6Ql4uaHc3_e_si-agNQyiXRhSe0I_eIK_bCAdR0-qQ")  #Paste your VTEX cookie here
 # URLs
 BASE_URL = f"https://{ACCOUNT_NAME}.vtexcommercestable.com.br/api/catalog/pvt"
 LOG_FILE = "execution_log.txt"
@@ -325,6 +325,48 @@ def process_single_sku(sku_id: int, checkpoint: CheckpointManager) -> bool:
         log_message(f"SKU ID: {sku_id} | Ignored (no details)", "WARNING")
         return True
 
+def remove_processed_skus_from_file(processed_skus: List[int], filename: str = SKU_LIST_FILE):
+    """Removes processed SKUs from the input file."""
+    if not os.path.exists(filename):
+        return
+
+    try:
+        # Create a set for faster lookup
+        processed_set = set(processed_skus)
+        
+        with open(filename, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+            
+        remaining_lines = []
+        removed_count = 0
+        
+        for line in lines:
+            stripped = line.strip()
+            
+            # Keep comments and empty lines
+            if not stripped or stripped.startswith('#'):
+                remaining_lines.append(line)
+                continue
+            
+            try:
+                sku_id = int(stripped)
+                if sku_id in processed_set:
+                    removed_count += 1
+                else:
+                    remaining_lines.append(line)
+            except ValueError:
+                remaining_lines.append(line)
+        
+        if removed_count > 0:
+            with open(filename, 'w', encoding='utf-8') as f:
+                f.writelines(remaining_lines)
+            log_message(f"Removed {removed_count} processed SKUs from {filename}")
+        else:
+            log_message("No SKUs removed from file.")
+            
+    except Exception as e:
+        log_message(f"Error updating SKU file: {e}", "ERROR")
+
 # --- RUNNER ---
 def run_bulk_update(resume: bool = True):
     """Executes bulk update from SKU list file."""
@@ -368,9 +410,16 @@ def run_bulk_update(resume: bool = True):
     except KeyboardInterrupt:
         log_message("Process interrupted by user. Saving checkpoint...", "WARNING")
         checkpoint.save()
+        remove_processed_skus_from_file(checkpoint.data["processed_skus"])
     except Exception as e:
         log_message(f"Fatal Error: {e}", "CRITICAL")
         checkpoint.save()
+        remove_processed_skus_from_file(checkpoint.data["processed_skus"])
+    
+    # Always remove processed SKUs at the end
+    remove_processed_skus_from_file(checkpoint.data["processed_skus"])
+    
+    log_message(f"--- PROCESS COMPLETED ({processed_count}/{len(sku_ids)} SKUs processed) ---")
     
     log_message(f"--- PROCESS COMPLETED ({processed_count}/{len(sku_ids)} SKUs processed) ---")
 
