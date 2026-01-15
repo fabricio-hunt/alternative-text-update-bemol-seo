@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # --- CONFIGURATION ---
 ACCOUNT_NAME = "bemol"
-VTEX_COOKIE = os.getenv("VTEX_COOKIE", "eyJhbGciOiJFUzI1NiIsImtpZCI6IkI0M0JBRjkyOEUxQ0RCQjgwRjY2NUNDMTUzM0UyNUI2MTVBQUE1QjkiLCJ0eXAiOiJqd3QifQ.eyJzdWIiOiJmYWJyaWNpb21hY2Vkb0BiZW1vbC5jb20uYnIiLCJhY2NvdW50IjoiYmVtb2wiLCJhdWRpZW5jZSI6ImFkbWluIiwic2VzcyI6IjYyNDlkODkzLTY5YTEtNDJjMy04MzFlLWRhN2FjZDU4NGU3YiIsImV4cCI6MTc2ODMyNTAyOSwidHlwZSI6InVzZXIiLCJ1c2VySWQiOiI3ZjhjMjljZi1kNTc2LTRkOWEtYTI5Ni00ZjE1YWYzYmI2NTQiLCJpYXQiOjE3NjgyMzg2MjksImlzUmVwcmVzZW50YXRpdmUiOmZhbHNlLCJpc3MiOiJ0b2tlbi1lbWl0dGVyIiwianRpIjoiZTBmOTFlNDQtMjZiYy00ZTNmLTljNmMtYTRlZmQ3N2EyYTVmIn0.XJjshOHc9hNBEbHcatsOfAY3v9Oa3WjfVqJHh0uW2qhZ6Ql4uaHc3_e_si-agNQyiXRhSe0I_eIK_bCAdR0-qQ")  #Paste your VTEX cookie here
+VTEX_COOKIE = os.getenv("VTEX_COOKIE", "paste your VTEX cookie here")  #Paste your VTEX cookie here
 # URLs
 BASE_URL = f"https://{ACCOUNT_NAME}.vtexcommercestable.com.br/api/catalog/pvt"
 LOG_FILE = "execution_log.txt"
@@ -245,7 +245,7 @@ def update_image_alt(sku_id: int, original_image_data: Dict, new_alt_text: str) 
         log_message(f"      [UPDATE ERROR] SKU {sku_id}: {error_msg}", "ERROR")
         return False
 
-def process_sku_images(sku_id: int, product_name: str) -> bool:
+def process_sku_images(sku_id: int, product_name: str, checkpoint: CheckpointManager) -> bool:
     """Processes all images for a SKU with natural language alt text."""
     url_get = f"{BASE_URL}/stockkeepingunit/{sku_id}/file"
     
@@ -258,6 +258,8 @@ def process_sku_images(sku_id: int, product_name: str) -> bool:
         images = response.json()
         
         if not images:
+            # Sem imagens = considerado processado
+            checkpoint.mark_processed(sku_id)
             return True
 
         # Check if ALL images already have alt text
@@ -268,6 +270,8 @@ def process_sku_images(sku_id: int, product_name: str) -> bool:
         
         if all_have_alt:
             log_message(f"      [SKIP SKU] All images already have alt text - SKU {sku_id}")
+            # Marcar como processado pois já está correto
+            checkpoint.mark_processed(sku_id)
             return True
 
         total_images = len(images)
@@ -283,9 +287,15 @@ def process_sku_images(sku_id: int, product_name: str) -> bool:
             else:
                 log_message(f"      [SKIP] Already correct: {new_alt}")
         
+        # Só marca como processado se teve sucesso na atualização
+        if success:
+            checkpoint.mark_processed(sku_id)
+        
         return success
     
     elif response.status_code == 404:
+        # 404 = SKU não existe ou sem imagens, considerar processado
+        checkpoint.mark_processed(sku_id)
         return True
     else:
         log_message(f"[GET ERROR] SKU {sku_id} - Status: {response.status_code}", "ERROR")
@@ -315,14 +325,13 @@ def process_single_sku(sku_id: int, checkpoint: CheckpointManager) -> bool:
     
     if product_name:
         log_message(f"SKU ID: {sku_id} | RefId: {ref_id} | Product: {product_name}")
-        success = process_sku_images(sku_id, product_name)
-        
-        if success:
-            checkpoint.mark_processed(sku_id)
-        
+        # Passar checkpoint para process_sku_images
+        success = process_sku_images(sku_id, product_name, checkpoint)
         return success
     else:
         log_message(f"SKU ID: {sku_id} | Ignored (no details)", "WARNING")
+        # SKU sem detalhes = considerar processado para não tentar novamente
+        checkpoint.mark_processed(sku_id)
         return True
 
 def remove_processed_skus_from_file(processed_skus: List[int], filename: str = SKU_LIST_FILE):
@@ -403,6 +412,8 @@ def run_bulk_update(resume: bool = True):
                 # Save checkpoint periodically
                 if processed_count % CHECKPOINT_INTERVAL == 0:
                     checkpoint.save()
+                    # Remover SKUs processados periodicamente
+                    remove_processed_skus_from_file(checkpoint.data["processed_skus"])
                     log_message(f"Checkpoint saved ({processed_count}/{len(sku_ids)} SKUs processed)")
         
         checkpoint.save()
@@ -418,8 +429,6 @@ def run_bulk_update(resume: bool = True):
     
     # Always remove processed SKUs at the end
     remove_processed_skus_from_file(checkpoint.data["processed_skus"])
-    
-    log_message(f"--- PROCESS COMPLETED ({processed_count}/{len(sku_ids)} SKUs processed) ---")
     
     log_message(f"--- PROCESS COMPLETED ({processed_count}/{len(sku_ids)} SKUs processed) ---")
 
