@@ -11,8 +11,12 @@ The system is engineered for high performance and resilience, featuring multi-th
 * **Concurrent Processing:** Utilizes `ThreadPoolExecutor` to process multiple SKUs simultaneously, significantly reducing execution time for large catalogs.
 * **Resilient Network Layer:** Implements a custom HTTP adapter with exponential backoff and automatic retries for handling transient network errors (HTTP 429, 50x).
 * **Smart Rate Limiting:** Includes a thread-safe rate limiter to comply with VTEX API quotas and prevent IP blocking.
+* **Persistent Queue Mode:** Successfully processed SKUs are automatically removed from `sku_ids.txt`, so the file behaves like a persistent queue and you can safely rerun the script multiple times without reprocessing.
 * **Checkpoint System:** Automatically saves progress to a JSON file. If the process is interrupted, it can resume exactly where it left off without reprocessing completed SKUs.
-* **Idempotency:** Checks existing Alt Text before sending update requests. If the image is already optimized, it skips the API call to save resources.
+* **RefId Support:** The input list can contain either VTEX numeric SKU IDs or Bemol RefIds (e.g., `12345-A`, `SKU-99`). The script will resolve RefIds to VTEX IDs automatically.
+* **Payload Sanitization & Robust PUT Handling:** Detects and fixes common VTEX API issues (missing/invalid `Url`, `s3://` URLs, read-only fields) and retries on timeouts to maximize success rate.
+* **Improved Alt Text Detection:** Detects and replaces VTEX auto-generated “dirty” alt text values (e.g., `240270-0`, `307783`) and only skips updating when both `Label` and `Text` already match the desired value.
+* **Cookie Expiration Detection:** If the VTEX session cookie expires (HTTP 401/403), the script aborts without removing SKUs, so you can refresh credentials and rerun safely.
 * **Comprehensive Logging:** Generates detailed execution and error logs for auditing and debugging purposes.
 
 ## Prerequisites
@@ -26,16 +30,35 @@ The system is engineered for high performance and resilience, featuring multi-th
 ```bash
 git clone https://github.com/your-username/vtex-seo-updater.git
 cd vtex-seo-updater
-
 ```
 
+2. **Create a Python virtual environment (recommended):**
+```bash
+python -m venv venv
+```
 
-2. **Install dependencies:**
+3. **Activate the virtual environment:**
+
+*Windows (PowerShell):*
+```powershell
+.\venv\Scripts\Activate.ps1
+```
+
+*Linux/macOS:* 
+```bash
+source venv/bin/activate
+```
+
+4. **Install dependencies:**
 This project uses `requests`. You can install it via pip:
 ```bash
-pip install requests
-
+pip install -r requirements.txt
 ```
+
+> 💡 Se você não tiver um `requirements.txt`, instale:
+> ```bash
+> pip install requests python-dotenv
+> ```
 
 
 
@@ -43,21 +66,41 @@ pip install requests
 
 ### 1. Environment Variables (Security Best Practice)
 
-To avoid hardcoding sensitive credentials, this application looks for the VTEX authentication cookie in the environment variables.
+To avoid hardcoding sensitive credentials, this application looks for the VTEX authentication cookie in environment variables.
+
+> ✅ Use a virtual environment and keep secrets out of version control.
+
+#### Option A — Set the env var in your shell (recommended)
 
 **Linux/Mac:**
 
 ```bash
 export VTEX_COOKIE="your_actual_cookie_value_here"
-
 ```
 
 **Windows (PowerShell):**
 
 ```powershell
 $env:VTEX_COOKIE="your_actual_cookie_value_here"
-
 ```
+
+#### Option B — Use a `.env` file (local development)
+
+1. Copy the template:
+
+```bash
+cp .env.example .env
+```
+
+2. Fill in your cookie in `.env`:
+
+```ini
+VTEX_COOKIE="your_actual_cookie_value_here"
+```
+
+The script will automatically load `.env` (if `python-dotenv` is installed).
+
+> ⚠️ **Nunca** commit o arquivo `.env` em sistemas de controle de versão — ele contém credenciais sensíveis.
 
 ### 2. Account Configuration
 
@@ -71,17 +114,24 @@ ACCOUNT_NAME = "bemol" # Update this if deploying for a different account
 
 ### 3. Input Data
 
-Create a file named `sku_ids.txt` in the root directory. Add the list of SKU IDs you wish to process, one per line.
+Create a file named `sku_ids.txt` in the root directory. Add one identifier per line.
+
+Supported identifier types:
+
+* **VTEX SKU ID** (numeric), e.g. `1001`
+* **Bemol RefId** (alphanumeric), e.g. `12345-A` or `SKU-99`
+
+Lines starting with `#` are treated as comments and ignored. Blank lines are also ignored.
+
+> **Nota:** O script remove automaticamente os SKUs processados do arquivo, para que ele se comporte como uma fila persistente. Se você precisar manter a lista original, faça uma cópia antes de rodar.
 
 **Example `sku_ids.txt`:**
 
 ```text
 1001
-1002
-1003
-# Comments are ignored
+12345-A
+# Comentário
 1004
-
 ```
 
 ## Usage
@@ -105,13 +155,16 @@ python main.py
 
 ```text
 .
-├── main.py              # Core application logic
-├── sku_ids.txt          # Input file containing SKU IDs
-├── checkpoint.json      # State file (auto-generated)
-├── execution_log.txt    # General operational logs (auto-generated)
-├── error_log.txt        # Error-specific logs (auto-generated)
-└── README.md            # Documentation
-
+├── main.py                  # Core application logic
+├── report.py                # Utility to parse logs and generate simple reports
+├── requirements.txt         # Python dependencies
+├── .env.example             # Template for storing secret env vars (ignored by git)
+├── .gitignore               # Arquivos ignorados pelo Git
+├── sku_ids.txt              # Input file containing SKU IDs / RefIds
+├── checkpoint.json          # State file (auto-generated)
+├── execution_log.txt        # General operational logs (auto-generated)
+├── error_log.txt            # Error-specific logs (auto-generated)
+└── README.md                # Documentation
 ```
 
 ## DevOps & Performance Tuning

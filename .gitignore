@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+.env/
+
+# Logs and state
+checkpoint.json
+execution_log.txt
+error_log.txt
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
