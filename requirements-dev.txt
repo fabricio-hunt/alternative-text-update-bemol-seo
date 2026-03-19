@@ -1,0 +1,16 @@
+# =============================================================================
+# requirements-dev.txt — dependências de desenvolvimento e CI
+# =============================================================================
+# Instale com:  pip install -r requirements-dev.txt
+# =============================================================================
+
+# Testes
+pytest==8.2.2
+pytest-cov==5.0.0
+
+# Linting e formatação
+ruff==0.4.7
+
+# Type checking
+mypy==1.10.0
+types-requests==2.32.0.20240602
